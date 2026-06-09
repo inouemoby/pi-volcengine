@@ -136,25 +136,7 @@ export default async function (pi: ExtensionAPI) {
         headers: { Authorization: `Bearer ${planKey}` },
       });
       const payload = (await resp.json()) as { data: any[] };
-      const candidates = buildCodingPlanModels(payload.data);
-
-      // Probe which models actually work on the coding endpoint
-      const probes = await Promise.allSettled(
-        candidates.map(async (m) => {
-          try {
-            const r = await fetch(`${VOLCENGINE_CODING_BASE}/chat/completions`, {
-              method: "POST",
-              headers: { Authorization: `Bearer ${planKey}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ model: m.id, messages: [{ role: "user", content: "ok" }], max_tokens: 1 }),
-            });
-            const d = await r.json();
-            return d.choices ? m : null;
-          } catch { return null; }
-        })
-      );
-      codingPlanModels = probes
-        .filter((p): p is PromiseFulfilledResult<any> => p.status === "fulfilled" && p.value !== null)
-        .map((p) => p.value);
+      codingPlanModels = buildCodingPlanModels(payload.data);
     } catch { /* network error — fall through */ }
   }
 
