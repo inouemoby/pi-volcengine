@@ -124,11 +124,6 @@ export default async function (pi: ExtensionAPI) {
   };
 
   const resolvedApiKey = apiKey || "$VOLCENGINE_API_KEY";
-  const compat = {
-    supportsDeveloperRole: false,
-    supportsReasoningEffort: false,
-    thinkingFormat: "deepseek" as const,
-  };
 
   if (!apiKey) {
     // No key — register both providers with placeholder
