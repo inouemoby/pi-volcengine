@@ -89,6 +89,11 @@ function buildOneModel(m: any, modelId: string) {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: limits.context_window || 128000,
     maxTokens: Math.min(limits.max_output_token_length || 16384, 65536),
+    compat: {
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      thinkingFormat: "deepseek" as const,
+    },
   };
 }
 
@@ -101,6 +106,12 @@ export default async function (pi: ExtensionAPI) {
     if (cfg?.apiKey) apiKey = cfg.apiKey;
   }
 
+  const compat = {
+    supportsDeveloperRole: false,
+    supportsReasoningEffort: false,
+    thinkingFormat: "deepseek" as const,
+  };
+
   const placeholderModel = {
     id: "login-required",
     name: "Login required — use /volcengine-login to add your API key",
@@ -109,6 +120,7 @@ export default async function (pi: ExtensionAPI) {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 1,
     maxTokens: 1,
+    compat,
   };
 
   const resolvedApiKey = apiKey || "$VOLCENGINE_API_KEY";
