@@ -45,28 +45,51 @@ function isCodingModel(m: any): boolean {
   return true;
 }
 
-function buildModels(data: any[]): any[] {
+// Build models for general endpoint (uses m.id as model id)
+function buildGeneralModels(data: any[]): any[] {
   return data
     .filter((m) => m.status === undefined || m.status !== "Shutdown")
     .filter(isCodingModel)
-    .map((m) => {
-      const limits = m.token_limits || {};
-      const inputMods: string[] = m.modalities?.input_modalities || ["text"];
-      const hasVision = inputMods.includes("image");
-      const hasReasoning = (limits.max_reasoning_token_length || 0) > 0;
+    .map((m) => buildOneModel(m, m.id));
+}
 
-      return {
-        id: m.id,
-        name: m.name || m.id,
-        reasoning: hasReasoning,
-        input: hasVision
-          ? (["text", "image"] as ("text" | "image")[])
-          : (["text"] as ("text" | "image")[]),
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: limits.context_window || 128000,
-        maxTokens: Math.min(limits.max_output_token_length || 16384, 65536),
-      };
-    });
+// Build models for coding plan endpoint (uses m.name as model id, deduplicated)
+function buildCodingPlanModels(data: any[]): any[] {
+  const filtered = data
+    .filter((m) => m.status === undefined || m.status !== "Shutdown")
+    .filter(isCodingModel);
+
+  // Deduplicate by name — multiple versions share the same name
+  const seen = new Set<string>();
+  const unique: any[] = [];
+  for (const m of filtered) {
+    const planId = m.name || m.id;
+    if (!seen.has(planId)) {
+      seen.add(planId);
+      unique.push(m);
+    }
+  }
+
+  return unique.map((m) => buildOneModel(m, m.name || m.id));
+}
+
+function buildOneModel(m: any, modelId: string) {
+  const limits = m.token_limits || {};
+  const inputMods: string[] = m.modalities?.input_modalities || ["text"];
+  const hasVision = inputMods.includes("image");
+  const hasReasoning = (limits.max_reasoning_token_length || 0) > 0;
+
+  return {
+    id: modelId,
+    name: m.name || m.id,
+    reasoning: hasReasoning,
+    input: hasVision
+      ? (["text", "image"] as ("text" | "image")[])
+      : (["text"] as ("text" | "image")[]),
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: limits.context_window || 128000,
+    maxTokens: Math.min(limits.max_output_token_length || 16384, 65536),
+  };
 }
 
 // ─── Main ─────────────────────────────────────────────────────
@@ -117,37 +140,38 @@ export default async function (pi: ExtensionAPI) {
   }
 
   // Fetch model list
-  let allModels: any[] = [];
+  let rawModels: any[] = [];
   try {
     const resp = await fetch(`${VOLCENGINE_BASE}/models`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const payload = (await resp.json()) as { data: any[] };
-    allModels = buildModels(payload.data);
+    rawModels = payload.data;
   } catch {
     // Network error — fall through to placeholder
   }
 
-  const models = allModels.length > 0 ? allModels : [placeholderModel];
+  const generalModels = rawModels.length > 0 ? buildGeneralModels(rawModels) : [placeholderModel];
+  const codingPlanModels = rawModels.length > 0 ? buildCodingPlanModels(rawModels) : [placeholderModel];
 
-  // Register volcengine (general endpoint — models need individual activation)
+  // Register volcengine (general endpoint — uses model id like doubao-seed-2-0-pro-260215)
   pi.registerProvider("volcengine", {
     name: "Volcengine (火山引擎)",
     baseUrl: VOLCENGINE_BASE,
     apiKey: resolvedApiKey,
     api: "openai-completions",
-    models,
+    models: generalModels,
     compat,
   });
 
-  // Register volcengine-plan (coding plan endpoint — all models available via subscription)
+  // Register volcengine-plan (coding plan — uses model name like doubao-seed-2-0-pro)
   pi.registerProvider("volcengine-plan", {
     name: "Volcengine Coding Plan (火山引擎编程套餐)",
     baseUrl: VOLCENGINE_CODING_BASE,
     apiKey: resolvedApiKey,
     api: "openai-completions",
-    models,
+    models: codingPlanModels,
     compat,
   });
 
