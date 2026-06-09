@@ -10,20 +10,26 @@ pi install git:github.com/inouemoby/pi-volcengine
 
 ## Setup
 
-Run `/volcengine-login` to configure your API Key:
+Use pi's built-in `/login` command to configure your API Key:
 
 ```
-/volcengine-login
-→ Enter your API Key (ark-...)
+/login volcengine
+```
+
+For Coding Plan (separate key):
+
+```
+/login volcengine-plan
 ```
 
 Or set the environment variable:
 
 ```bash
 export VOLCENGINE_API_KEY=ark-your-key-here
+export VOLCENGINE_PLAN_API_KEY=ark-your-key-here
 ```
 
-The API Key is stored in `~/.pi/agent/settings.json` under `volcengine.apiKey` and persists across sessions.
+The API Key is stored in `~/.pi/agent/auth.json` and persists across sessions.
 
 ## What It Does
 
@@ -57,12 +63,7 @@ Each model is automatically configured with:
 - **Context window** — auto-detected from `token_limits.context_window`
 - **Cost** — free under Coding Plan subscription
 
-## Commands
 
-| Command | Description |
-|---------|-------------|
-| `/volcengine-login` | Set or update API Key |
-| `/volcengine-logout` | Clear API Key |
 
 ## License
 
