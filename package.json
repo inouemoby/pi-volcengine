@@ -1,0 +1,9 @@
+{
+  "name": "pi-volcengine",
+  "version": "1.0.0",
+  "description": "Register Volcengine (火山引擎/火山方舟) as a provider for pi coding agent. Auto-fetches available models.",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
