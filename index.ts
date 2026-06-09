@@ -1,47 +1,24 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { resolve, dirname, join } from "node:path";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 
 const VOLCENGINE_BASE = "https://ark.cn-beijing.volces.com/api/v3";
 const VOLCENGINE_CODING_BASE = "https://ark.cn-beijing.volces.com/api/coding/v3";
-const AUTH_KEY = "volcengine";
 
-// ─── Auth helpers (auth.json, same as ollama-cloud) ────────────
-function getAgentDir(): string {
-  return process.env.PI_CODING_AGENT_DIR || join(process.env.HOME || process.env.USERPROFILE || ".", ".pi/agent");
-}
-
-function readAuth(): Record<string, any> {
-  try {
-    const p = join(getAgentDir(), "auth.json");
-    if (!existsSync(p)) return {};
-    return JSON.parse(readFileSync(p, "utf-8"));
-  } catch { return {}; }
-}
-
-function writeAuth(data: Record<string, any>) {
-  const p = join(getAgentDir(), "auth.json");
-  mkdirSync(dirname(p), { recursive: true });
-  writeFileSync(p, JSON.stringify(data, null, 2), "utf-8");
-}
-
+// ─── Auth (same pattern as ollama-cloud) ───────────────────────
 function readApiKey(): string {
-  // env var > auth.json
-  const env = process.env.VOLCENGINE_API_KEY || process.env.ARK_API_KEY || "";
-  if (env) return env;
-  return readAuth()[AUTH_KEY]?.key || "";
-}
-
-function saveApiKey(key: string) {
-  const auth = readAuth();
-  auth[AUTH_KEY] = { ...(auth[AUTH_KEY] || {}), key };
-  writeAuth(auth);
-}
-
-function clearApiKey() {
-  const auth = readAuth();
-  auth[AUTH_KEY] = { ...(auth[AUTH_KEY] || {}), key: "" };
-  writeAuth(auth);
+  let apiKey = process.env.VOLCENGINE_API_KEY || process.env.ARK_API_KEY || "";
+  if (!apiKey) {
+    try {
+      const agentDir = process.env.PI_CODING_AGENT_DIR || join(process.env.USERPROFILE || process.env.HOME || ".", ".pi/agent");
+      const authPath = join(agentDir, "auth.json");
+      if (existsSync(authPath)) {
+        const auth = JSON.parse(readFileSync(authPath, "utf-8"));
+        if (auth["volcengine"]?.key) apiKey = auth["volcengine"].key;
+      }
+    } catch { /* ignore */ }
+  }
+  return apiKey;
 }
 
 // ─── Model filtering ──────────────────────────────────────────
@@ -120,7 +97,7 @@ export default async function (pi: ExtensionAPI) {
 
   const placeholderModel = {
     id: "login-required",
-    name: "Login required — use /volcengine-login to add your API key",
+    name: "Login required — use /login to add your API key",
     reasoning: false,
     input: ["text"] as ("text" | "image")[],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -129,102 +106,61 @@ export default async function (pi: ExtensionAPI) {
     compat: { ...MODEL_COMPAT },
   };
 
-  if (!apiKey) {
-    pi.registerProvider("volcengine", {
-      name: "Volcengine (火山引擎)",
-      baseUrl: VOLCENGINE_BASE,
-      apiKey: "$VOLCENGINE_API_KEY",
-      api: "openai-completions",
-      models: [placeholderModel],
-    });
-    pi.registerProvider("volcengine-plan", {
-      name: "Volcengine Coding Plan (火山引擎编程套餐)",
-      baseUrl: VOLCENGINE_CODING_BASE,
-      apiKey: "$VOLCENGINE_API_KEY",
-      api: "openai-completions",
-      models: [placeholderModel],
-    });
-    return;
+  // ─── General endpoint models ─────────────────────────────
+  let generalModels: any[] = [];
+  if (apiKey) {
+    try {
+      const resp = await fetch(`${VOLCENGINE_BASE}/models`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      const payload = (await resp.json()) as { data: any[] };
+      generalModels = buildGeneralModels(payload.data);
+    } catch { /* network error — fall through */ }
   }
-
-  // Fetch model list
-  let rawModels: any[] = [];
-  try {
-    const resp = await fetch(`${VOLCENGINE_BASE}/models`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const payload = (await resp.json()) as { data: any[] };
-    rawModels = payload.data;
-  } catch {
-    // Network error — fall through to placeholder
-  }
-
-  const generalModels = rawModels.length > 0 ? buildGeneralModels(rawModels) : [placeholderModel];
-
-  // For coding plan, probe which models actually work
-  let codingPlanModels: any[] = [];
-  if (rawModels.length > 0) {
-    const candidates = buildCodingPlanModels(rawModels);
-    const probes = await Promise.allSettled(
-      candidates.map(async (m) => {
-        try {
-          const r = await fetch(`${VOLCENGINE_CODING_BASE}/chat/completions`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ model: m.id, messages: [{ role: "user", content: "ok" }], max_tokens: 1 }),
-          });
-          const d = await r.json();
-          return d.choices ? m : null;
-        } catch { return null; }
-      })
-    );
-    codingPlanModels = probes
-      .filter((p): p is PromiseFulfilledResult<any> => p.status === "fulfilled" && p.value !== null)
-      .map((p) => p.value);
-  }
-  codingPlanModels = codingPlanModels.length > 0 ? codingPlanModels : [placeholderModel];
 
   pi.registerProvider("volcengine", {
     name: "Volcengine (火山引擎)",
     baseUrl: VOLCENGINE_BASE,
-    apiKey,
+    apiKey: "$VOLCENGINE_API_KEY",
     api: "openai-completions",
-    models: generalModels,
+    models: generalModels.length > 0 ? generalModels : [placeholderModel],
   });
+
+  // ─── Coding Plan models ──────────────────────────────────
+  let codingPlanModels: any[] = [];
+  if (apiKey) {
+    try {
+      const resp = await fetch(`${VOLCENGINE_BASE}/models`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      const payload = (await resp.json()) as { data: any[] };
+      const candidates = buildCodingPlanModels(payload.data);
+
+      // Probe which models actually work on the coding endpoint
+      const probes = await Promise.allSettled(
+        candidates.map(async (m) => {
+          try {
+            const r = await fetch(`${VOLCENGINE_CODING_BASE}/chat/completions`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ model: m.id, messages: [{ role: "user", content: "ok" }], max_tokens: 1 }),
+            });
+            const d = await r.json();
+            return d.choices ? m : null;
+          } catch { return null; }
+        })
+      );
+      codingPlanModels = probes
+        .filter((p): p is PromiseFulfilledResult<any> => p.status === "fulfilled" && p.value !== null)
+        .map((p) => p.value);
+    } catch { /* network error — fall through */ }
+  }
 
   pi.registerProvider("volcengine-plan", {
     name: "Volcengine Coding Plan (火山引擎编程套餐)",
     baseUrl: VOLCENGINE_CODING_BASE,
-    apiKey,
+    apiKey: "$VOLCENGINE_API_KEY",
     api: "openai-completions",
-    models: codingPlanModels,
-  });
-
-  // ── /volcengine-login ────────────────────────────────────
-  pi.registerCommand("volcengine-login", {
-    description: "Set Volcengine API Key (interactive)",
-    handler: async (args, ctx) => {
-      const t = (args ?? "").trim();
-      let key: string;
-      if (t) {
-        key = t;
-      } else {
-        const input = await ctx.ui.input("Volcengine Login — API Key (ark-...):");
-        if (!input?.trim()) return ctx.ui.notify("Cancelled.", "warning");
-        key = input.trim();
-      }
-      saveApiKey(key);
-      ctx.ui.notify("✓ Volcengine API Key saved! Run /reload to load models.", "success");
-    },
-  });
-
-  // ── /volcengine-logout ───────────────────────────────────
-  pi.registerCommand("volcengine-logout", {
-    description: "Clear Volcengine API Key",
-    handler: async (_args, ctx) => {
-      clearApiKey();
-      ctx.ui.notify("✓ Volcengine API Key cleared. Run /reload to apply.", "success");
-    },
+    models: codingPlanModels.length > 0 ? codingPlanModels : [placeholderModel],
   });
 }
