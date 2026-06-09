@@ -1,29 +1,47 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, join } from "node:path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 
 const VOLCENGINE_BASE = "https://ark.cn-beijing.volces.com/api/v3";
 const VOLCENGINE_CODING_BASE = "https://ark.cn-beijing.volces.com/api/coding/v3";
-const SETTINGS_KEY = "volcengine";
+const AUTH_KEY = "volcengine";
 
-// ─── Settings helpers ─────────────────────────────────────────
-function getSettingsPath(): string {
-  const home = process.env.HOME || process.env.USERPROFILE || "";
-  return resolve(home, ".pi", "agent", "settings.json");
+// ─── Auth helpers (auth.json, same as ollama-cloud) ────────────
+function getAgentDir(): string {
+  return process.env.PI_CODING_AGENT_DIR || join(process.env.HOME || process.env.USERPROFILE || ".", ".pi/agent");
 }
 
-function readSettings(): Record<string, any> {
+function readAuth(): Record<string, any> {
   try {
-    const path = getSettingsPath();
-    if (!existsSync(path)) return {};
-    return JSON.parse(readFileSync(path, "utf-8"));
+    const p = join(getAgentDir(), "auth.json");
+    if (!existsSync(p)) return {};
+    return JSON.parse(readFileSync(p, "utf-8"));
   } catch { return {}; }
 }
 
-function writeSettings(data: Record<string, any>) {
-  const path = getSettingsPath();
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(data, null, 2), "utf-8");
+function writeAuth(data: Record<string, any>) {
+  const p = join(getAgentDir(), "auth.json");
+  mkdirSync(dirname(p), { recursive: true });
+  writeFileSync(p, JSON.stringify(data, null, 2), "utf-8");
+}
+
+function readApiKey(): string {
+  // env var > auth.json
+  const env = process.env.VOLCENGINE_API_KEY || process.env.ARK_API_KEY || "";
+  if (env) return env;
+  return readAuth()[AUTH_KEY]?.key || "";
+}
+
+function saveApiKey(key: string) {
+  const auth = readAuth();
+  auth[AUTH_KEY] = { ...(auth[AUTH_KEY] || {}), key };
+  writeAuth(auth);
+}
+
+function clearApiKey() {
+  const auth = readAuth();
+  auth[AUTH_KEY] = { ...(auth[AUTH_KEY] || {}), key: "" };
+  writeAuth(auth);
 }
 
 // ─── Model filtering ──────────────────────────────────────────
@@ -45,33 +63,11 @@ function isCodingModel(m: any): boolean {
   return true;
 }
 
-// Build models for general endpoint (uses m.id as model id)
-function buildGeneralModels(data: any[]): any[] {
-  return data
-    .filter((m) => m.status === undefined || m.status !== "Shutdown")
-    .filter(isCodingModel)
-    .map((m) => buildOneModel(m, m.id));
-}
-
-// Build models for coding plan endpoint (uses m.name as model id, deduplicated)
-function buildCodingPlanModels(data: any[]): any[] {
-  const filtered = data
-    .filter((m) => m.status === undefined || m.status !== "Shutdown")
-    .filter(isCodingModel);
-
-  // Deduplicate by name — multiple versions share the same name
-  const seen = new Set<string>();
-  const unique: any[] = [];
-  for (const m of filtered) {
-    const planId = m.name || m.id;
-    if (!seen.has(planId)) {
-      seen.add(planId);
-      unique.push(m);
-    }
-  }
-
-  return unique.map((m) => buildOneModel(m, m.name || m.id));
-}
+const MODEL_COMPAT = {
+  supportsDeveloperRole: false,
+  supportsReasoningEffort: false,
+  thinkingFormat: "deepseek" as const,
+};
 
 function buildOneModel(m: any, modelId: string) {
   const limits = m.token_limits || {};
@@ -89,28 +85,38 @@ function buildOneModel(m: any, modelId: string) {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: limits.context_window || 128000,
     maxTokens: Math.min(limits.max_output_token_length || 16384, 65536),
-    compat: {
-      supportsDeveloperRole: false,
-      supportsReasoningEffort: false,
-      thinkingFormat: "deepseek" as const,
-    },
+    compat: { ...MODEL_COMPAT },
   };
+}
+
+function buildGeneralModels(data: any[]): any[] {
+  return data
+    .filter((m) => m.status === undefined || m.status !== "Shutdown")
+    .filter(isCodingModel)
+    .map((m) => buildOneModel(m, m.id));
+}
+
+function buildCodingPlanModels(data: any[]): any[] {
+  const filtered = data
+    .filter((m) => m.status === undefined || m.status !== "Shutdown")
+    .filter(isCodingModel);
+
+  const seen = new Set<string>();
+  const unique: any[] = [];
+  for (const m of filtered) {
+    const planId = m.name || m.id;
+    if (!seen.has(planId)) {
+      seen.add(planId);
+      unique.push(m);
+    }
+  }
+
+  return unique.map((m) => buildOneModel(m, m.name || m.id));
 }
 
 // ─── Main ─────────────────────────────────────────────────────
 export default async function (pi: ExtensionAPI) {
-  // Resolve API key: env var > settings.json
-  let apiKey = process.env.VOLCENGINE_API_KEY || process.env.ARK_API_KEY || "";
-  if (!apiKey) {
-    const cfg = readSettings()[SETTINGS_KEY];
-    if (cfg?.apiKey) apiKey = cfg.apiKey;
-  }
-
-  const compat = {
-    supportsDeveloperRole: false,
-    supportsReasoningEffort: false,
-    thinkingFormat: "deepseek" as const,
-  };
+  const apiKey = readApiKey();
 
   const placeholderModel = {
     id: "login-required",
@@ -120,28 +126,23 @@ export default async function (pi: ExtensionAPI) {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 1,
     maxTokens: 1,
-    compat,
+    compat: { ...MODEL_COMPAT },
   };
 
-  const resolvedApiKey = apiKey || "$VOLCENGINE_API_KEY";
-
   if (!apiKey) {
-    // No key — register both providers with placeholder
     pi.registerProvider("volcengine", {
       name: "Volcengine (火山引擎)",
       baseUrl: VOLCENGINE_BASE,
-      apiKey: resolvedApiKey,
+      apiKey: "$VOLCENGINE_API_KEY",
       api: "openai-completions",
       models: [placeholderModel],
-      compat,
     });
     pi.registerProvider("volcengine-plan", {
       name: "Volcengine Coding Plan (火山引擎编程套餐)",
       baseUrl: VOLCENGINE_CODING_BASE,
-      apiKey: resolvedApiKey,
+      apiKey: "$VOLCENGINE_API_KEY",
       api: "openai-completions",
       models: [placeholderModel],
-      compat,
     });
     return;
   }
@@ -161,7 +162,7 @@ export default async function (pi: ExtensionAPI) {
 
   const generalModels = rawModels.length > 0 ? buildGeneralModels(rawModels) : [placeholderModel];
 
-  // For coding plan, probe which models actually work on the coding endpoint
+  // For coding plan, probe which models actually work
   let codingPlanModels: any[] = [];
   if (rawModels.length > 0) {
     const candidates = buildCodingPlanModels(rawModels);
@@ -184,24 +185,20 @@ export default async function (pi: ExtensionAPI) {
   }
   codingPlanModels = codingPlanModels.length > 0 ? codingPlanModels : [placeholderModel];
 
-  // Register volcengine (general endpoint — uses model id like doubao-seed-2-0-pro-260215)
   pi.registerProvider("volcengine", {
     name: "Volcengine (火山引擎)",
     baseUrl: VOLCENGINE_BASE,
-    apiKey: resolvedApiKey,
+    apiKey,
     api: "openai-completions",
     models: generalModels,
-    compat,
   });
 
-  // Register volcengine-plan (coding plan — uses model name like doubao-seed-2-0-pro)
   pi.registerProvider("volcengine-plan", {
     name: "Volcengine Coding Plan (火山引擎编程套餐)",
     baseUrl: VOLCENGINE_CODING_BASE,
-    apiKey: resolvedApiKey,
+    apiKey,
     api: "openai-completions",
     models: codingPlanModels,
-    compat,
   });
 
   // ── /volcengine-login ────────────────────────────────────
@@ -217,9 +214,7 @@ export default async function (pi: ExtensionAPI) {
         if (!input?.trim()) return ctx.ui.notify("Cancelled.", "warning");
         key = input.trim();
       }
-      const settings = readSettings();
-      settings[SETTINGS_KEY] = { ...(settings[SETTINGS_KEY] || {}), apiKey: key };
-      writeSettings(settings);
+      saveApiKey(key);
       ctx.ui.notify("✓ Volcengine API Key saved! Run /reload to load models.", "success");
     },
   });
@@ -228,9 +223,7 @@ export default async function (pi: ExtensionAPI) {
   pi.registerCommand("volcengine-logout", {
     description: "Clear Volcengine API Key",
     handler: async (_args, ctx) => {
-      const settings = readSettings();
-      settings[SETTINGS_KEY] = { ...(settings[SETTINGS_KEY] || {}), apiKey: "" };
-      writeSettings(settings);
+      clearApiKey();
       ctx.ui.notify("✓ Volcengine API Key cleared. Run /reload to apply.", "success");
     },
   });
