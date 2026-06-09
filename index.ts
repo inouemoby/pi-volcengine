@@ -92,6 +92,7 @@ export default async function (pi: ExtensionAPI) {
   const compat = {
     supportsDeveloperRole: false,
     supportsReasoningEffort: false,
+    thinkingFormat: "deepseek" as const,
   };
 
   if (!apiKey) {
