@@ -153,7 +153,29 @@ export default async function (pi: ExtensionAPI) {
   }
 
   const generalModels = rawModels.length > 0 ? buildGeneralModels(rawModels) : [placeholderModel];
-  const codingPlanModels = rawModels.length > 0 ? buildCodingPlanModels(rawModels) : [placeholderModel];
+
+  // For coding plan, probe which models actually work on the coding endpoint
+  let codingPlanModels: any[] = [];
+  if (rawModels.length > 0) {
+    const candidates = buildCodingPlanModels(rawModels);
+    const probes = await Promise.allSettled(
+      candidates.map(async (m) => {
+        try {
+          const r = await fetch(`${VOLCENGINE_CODING_BASE}/chat/completions`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ model: m.id, messages: [{ role: "user", content: "ok" }], max_tokens: 1 }),
+          });
+          const d = await r.json();
+          return d.choices ? m : null;
+        } catch { return null; }
+      })
+    );
+    codingPlanModels = probes
+      .filter((p): p is PromiseFulfilledResult<any> => p.status === "fulfilled" && p.value !== null)
+      .map((p) => p.value);
+  }
+  codingPlanModels = codingPlanModels.length > 0 ? codingPlanModels : [placeholderModel];
 
   // Register volcengine (general endpoint — uses model id like doubao-seed-2-0-pro-260215)
   pi.registerProvider("volcengine", {
