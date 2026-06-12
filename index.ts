@@ -74,23 +74,121 @@ function buildGeneralModels(data: any[]): any[] {
     .map((m) => buildOneModel(m, m.id));
 }
 
-function buildCodingPlanModels(data: any[]): any[] {
-  const filtered = data
-    .filter((m) => m.status === undefined || m.status !== "Shutdown")
-    .filter(isCodingModel);
-
-  const seen = new Set<string>();
-  const unique: any[] = [];
-  for (const m of filtered) {
-    const planId = m.name || m.id;
-    if (!seen.has(planId)) {
-      seen.add(planId);
-      unique.push(m);
-    }
-  }
-
-  return unique.map((m) => buildOneModel(m, m.name || m.id));
-}
+// ─── Coding Plan 硬编码模型列表 ──────────────────────────────
+// 来源: https://www.volcengine.com/docs/82379/1925114
+// Coding Plan 没有 /models 接口，模型列表必须硬编码
+const CODING_PLAN_MODELS: any[] = [
+  {
+    id: "ark-code-latest",
+    name: "Auto (智能调度)",
+    reasoning: false,
+    input: ["text", "image"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 256000,
+    maxTokens: 32000,
+    compat: { ...MODEL_COMPAT },
+  },
+  {
+    id: "doubao-seed-2.0-code",
+    name: "Doubao Seed 2.0 Code",
+    reasoning: false,
+    input: ["text", "image"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 256000,
+    maxTokens: 128000,
+    compat: { ...MODEL_COMPAT },
+  },
+  {
+    id: "doubao-seed-2.0-pro",
+    name: "Doubao Seed 2.0 Pro",
+    reasoning: false,
+    input: ["text", "image"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 256000,
+    maxTokens: 128000,
+    compat: { ...MODEL_COMPAT },
+  },
+  {
+    id: "doubao-seed-2.0-lite",
+    name: "Doubao Seed 2.0 Lite",
+    reasoning: false,
+    input: ["text", "image"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 256000,
+    maxTokens: 128000,
+    compat: { ...MODEL_COMPAT },
+  },
+  {
+    id: "doubao-seed-code",
+    name: "Doubao Seed Code",
+    reasoning: false,
+    input: ["text", "image"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 256000,
+    maxTokens: 32000,
+    compat: { ...MODEL_COMPAT },
+  },
+  {
+    id: "minimax-m3",
+    name: "MiniMax M3",
+    reasoning: true,
+    input: ["text", "image"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 512000,
+    maxTokens: 128000,
+    compat: { ...MODEL_COMPAT },
+  },
+  {
+    id: "minimax-m2.7",
+    name: "MiniMax M2.7",
+    reasoning: true,
+    input: ["text"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 200000,
+    maxTokens: 128000,
+    compat: { ...MODEL_COMPAT },
+  },
+  {
+    id: "kimi-k2.6",
+    name: "Kimi K2.6",
+    reasoning: true,
+    input: ["text", "image"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 256000,
+    maxTokens: 32000,
+    compat: { ...MODEL_COMPAT },
+  },
+  {
+    id: "glm-5.1",
+    name: "GLM 5.1",
+    reasoning: true,
+    input: ["text"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 200000,
+    maxTokens: 128000,
+    compat: { ...MODEL_COMPAT },
+  },
+  {
+    id: "deepseek-v4-pro",
+    name: "DeepSeek V4 Pro",
+    reasoning: true,
+    input: ["text"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1024000,
+    maxTokens: 384000,
+    compat: { ...MODEL_COMPAT },
+  },
+  {
+    id: "deepseek-v4-flash",
+    name: "DeepSeek V4 Flash",
+    reasoning: true,
+    input: ["text"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1024000,
+    maxTokens: 384000,
+    compat: { ...MODEL_COMPAT },
+  },
+];
 
 // ─── Main ─────────────────────────────────────────────────────
 export default async function (pi: ExtensionAPI) {
@@ -128,23 +226,12 @@ export default async function (pi: ExtensionAPI) {
     models: generalModels.length > 0 ? generalModels : [placeholderModel],
   });
 
-  // ─── Coding Plan models ──────────────────────────────────
-  let codingPlanModels: any[] = [];
-  if (planKey) {
-    try {
-      const resp = await fetch(`${VOLCENGINE_BASE}/models`, {
-        headers: { Authorization: `Bearer ${planKey}` },
-      });
-      const payload = (await resp.json()) as { data: any[] };
-      codingPlanModels = buildCodingPlanModels(payload.data);
-    } catch { /* network error — fall through */ }
-  }
-
+  // ─── Coding Plan 硬编码模型 ─────────────────────────────
   pi.registerProvider("volcengine-plan", {
     name: "Volcengine Coding Plan (火山引擎编程套餐)",
     baseUrl: VOLCENGINE_CODING_BASE,
     apiKey: "$VOLCENGINE_PLAN_API_KEY",
     api: "openai-completions",
-    models: codingPlanModels.length > 0 ? codingPlanModels : [placeholderModel],
+    models: CODING_PLAN_MODELS,
   });
 }
