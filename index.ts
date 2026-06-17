@@ -159,8 +159,8 @@ const CODING_PLAN_MODELS: any[] = [
     compat: { ...MODEL_COMPAT },
   },
   {
-    id: "glm-5.1",
-    name: "GLM 5.1",
+    id: "glm-5.2",
+    name: "GLM 5.2",
     reasoning: true,
     input: ["text"] as ("text" | "image")[],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
