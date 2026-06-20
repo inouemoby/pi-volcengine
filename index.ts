@@ -164,7 +164,7 @@ const CODING_PLAN_MODELS: any[] = [
     reasoning: true,
     input: ["text"] as ("text" | "image")[],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200000,
+    contextWindow: 1024000,
     maxTokens: 128000,
     compat: { ...MODEL_COMPAT },
   },
